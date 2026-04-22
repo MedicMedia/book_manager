@@ -22,25 +22,32 @@ function doPost(e) {
       return json({ ok: false, error: "unauthorized" });
     }
 
-    ensureHeaderRow_();
-
     if (payload.action === "list") {
       const rows = listBooks_();
       return json({ ok: true, data: rows });
     }
 
     if (payload.action === "create") {
-      const created = createBook_(payload.book || {});
+      const created = withScriptLock_(function () {
+        ensureHeaderRow_();
+        return createBook_(payload.book || {});
+      });
       return json({ ok: true, data: created });
     }
 
     if (payload.action === "update") {
-      const updated = updateBook_(payload.id, payload.book || {});
+      const updated = withScriptLock_(function () {
+        ensureHeaderRow_();
+        return updateBook_(payload.id, payload.book || {});
+      });
       return json({ ok: true, data: updated });
     }
 
     if (payload.action === "delete") {
-      const deleted = deleteBook_(payload.id);
+      const deleted = withScriptLock_(function () {
+        ensureHeaderRow_();
+        return deleteBook_(payload.id);
+      });
       return json({ ok: true, data: deleted });
     }
 
@@ -50,6 +57,16 @@ function doPost(e) {
       ok: false,
       error: String(error && error.message ? error.message : error),
     });
+  }
+}
+
+function withScriptLock_(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -94,7 +111,7 @@ function createBook_(book) {
     throw new Error("sheet_not_found");
   }
 
-  const id = String(nextId_(sheet));
+  const id = Utilities.getUuid();
   const now = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd HH:mm:ss");
   const isbn = String(book.isbn || "").replace(/-/g, "").trim();
 
@@ -189,23 +206,6 @@ function deleteBook_(id) {
   }
 
   throw new Error("not_found");
-}
-
-function nextId_(sheet) {
-  const lastRow = sheet.getLastRow();
-  if (lastRow <= 1) {
-    return 1;
-  }
-
-  const idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-  const maxId = idValues.reduce((max, row) => {
-    const current = Number(row[0]);
-    if (Number.isNaN(current)) {
-      return max;
-    }
-    return Math.max(max, current);
-  }, 0);
-  return maxId + 1;
 }
 
 function toBookObject_(row) {

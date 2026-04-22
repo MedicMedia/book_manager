@@ -64,6 +64,8 @@ NEXT_PUBLIC_SPREADSHEET_URL=
 10. `NEXT_PUBLIC_SPREADSHEET_URL` へシート URL を設定
 
 > 削除機能を使う場合: `docs/google-apps-script.gs` を最新に更新後、Apps Script を再デプロイしてください。
+> 同時登録時のID衝突を避けるため、IDは Apps Script 側で `Utilities.getUuid()` により生成します。
+> さらに、`create / update / delete` は Apps Script 側で `LockService` により排他制御しています。
 
 ## フロントエンド構成
 

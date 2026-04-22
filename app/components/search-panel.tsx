@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { DOMAIN_OPTIONS, SUBJECT_OPTIONS } from "@/lib/book-options";
+import { ALL_SUBJECT_OPTIONS, DOMAIN_OPTIONS, getSubjectsByDomain } from "@/lib/book-options";
 
 export type SearchState = {
   keyword: string;
@@ -29,7 +29,12 @@ export const DEFAULT_SEARCH: SearchState = {
 export function SearchPanel({ onSearch, onReset, loading }: Props) {
   const [search, setSearch] = useState<SearchState>(DEFAULT_SEARCH);
   const availableDomains = useMemo(() => ["すべて", ...DOMAIN_OPTIONS], []);
-  const availableSubjects = useMemo(() => ["すべて", ...SUBJECT_OPTIONS], []);
+  const availableSubjects = useMemo(() => {
+    if (search.domain === "すべて") {
+      return ["すべて", ...ALL_SUBJECT_OPTIONS];
+    }
+    return ["すべて", ...getSubjectsByDomain(search.domain)];
+  }, [search.domain]);
 
   return (
     <section className="panel panel-search">
@@ -74,7 +79,13 @@ export function SearchPanel({ onSearch, onReset, loading }: Props) {
           id="domain"
           className="form-input"
           value={search.domain}
-          onChange={(event) => setSearch((prev) => ({ ...prev, domain: event.target.value }))}
+          onChange={(event) =>
+            setSearch((prev) => ({
+              ...prev,
+              domain: event.target.value,
+              subject: "すべて",
+            }))
+          }
         >
           {availableDomains.map((domain) => (
             <option key={domain} value={domain}>

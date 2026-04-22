@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { DOMAIN_OPTIONS, SUBJECT_OPTIONS } from "@/lib/book-options";
+import { DOMAIN_OPTIONS, getSubjectsByDomain } from "@/lib/book-options";
 
 type Props = {
   onRegistered?: () => void;
@@ -40,6 +40,7 @@ export function RegisterForm({ onRegistered }: Props) {
   const [error, setError] = useState("");
 
   const isbnDigits = useMemo(() => normalizeIsbn(form.isbn), [form.isbn]);
+  const subjectOptions = useMemo(() => getSubjectsByDomain(form.domain), [form.domain]);
 
   const updateField = <K extends keyof RegisterState>(key: K, value: RegisterState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -250,7 +251,14 @@ export function RegisterForm({ onRegistered }: Props) {
           id="domain-select"
           className="form-input"
           value={form.domain}
-          onChange={(event) => updateField("domain", event.target.value)}
+          onChange={(event) => {
+            const nextDomain = event.target.value;
+            setForm((prev) => ({
+              ...prev,
+              domain: nextDomain,
+              subject: "",
+            }));
+          }}
         >
           <option value="">選択してください</option>
           {DOMAIN_OPTIONS.map((domain) => (
@@ -270,7 +278,7 @@ export function RegisterForm({ onRegistered }: Props) {
           onChange={(event) => updateField("subject", event.target.value)}
         >
           <option value="">選択してください</option>
-          {SUBJECT_OPTIONS.map((subject) => (
+          {subjectOptions.map((subject) => (
             <option key={subject} value={subject}>
               {subject}
             </option>
