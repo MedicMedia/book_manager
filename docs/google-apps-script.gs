@@ -119,13 +119,13 @@ function createBook_(book) {
     id,
     now,
     isbn,
-    String(book.domain || ""),
-    String(book.subject || ""),
-    String(book.title || ""),
-    String(book.author || ""),
-    String(book.publisher || ""),
-    String(book.publishedDate || ""),
-    String(book.note || ""),
+    sanitizeForSheetText_(book.domain),
+    sanitizeForSheetText_(book.subject),
+    sanitizeForSheetText_(book.title),
+    sanitizeForSheetText_(book.author),
+    sanitizeForSheetText_(book.publisher),
+    sanitizeForSheetText_(book.publishedDate),
+    sanitizeForSheetText_(book.note),
   ];
 
   sheet.appendRow(row);
@@ -159,13 +159,13 @@ function updateBook_(id, book) {
         rowId,
         now,
         String(book.isbn || "").replace(/-/g, "").trim(),
-        String(book.domain || ""),
-        String(book.subject || ""),
-        String(book.title || ""),
-        String(book.author || ""),
-        String(book.publisher || ""),
-        String(book.publishedDate || ""),
-        String(book.note || ""),
+        sanitizeForSheetText_(book.domain),
+        sanitizeForSheetText_(book.subject),
+        sanitizeForSheetText_(book.title),
+        sanitizeForSheetText_(book.author),
+        sanitizeForSheetText_(book.publisher),
+        sanitizeForSheetText_(book.publishedDate),
+        sanitizeForSheetText_(book.note),
       ];
 
       const sheetRow = index + 2;
@@ -214,6 +214,17 @@ function toBookObject_(row) {
     obj[key] = row[index];
   });
   return obj;
+}
+
+function sanitizeForSheetText_(value) {
+  const raw = String(value == null ? "" : value);
+
+  // Spreadsheet formula injection guard:
+  // Leading spaces/tabs/newlines + =, +, -, @ are treated as formulas by spreadsheet apps.
+  if (/^[\s\u0009\u000a\u000d]*[=+\-@]/.test(raw)) {
+    return "'" + raw;
+  }
+  return raw;
 }
 
 function json(body) {

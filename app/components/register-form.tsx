@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 
 import { DOMAIN_OPTIONS, getSubjectsByDomain } from "@/lib/book-options";
+import { formatApiCaughtError, formatApiHttpError } from "@/lib/client/api-diagnostics";
+import { isValidBookDateInput } from "@/lib/date-format";
 
 type Props = {
   onRegistered?: () => void;
@@ -30,7 +32,12 @@ const DEFAULT_FORM: RegisterState = {
   note: "",
 };
 
-const normalizeIsbn = (value: string) => value.replace(/-/g, "").trim();
+const MAX_INPUT_LENGTH = 1000;
+const normalizeIsbn = (value: string) => value.replace(/\D/g, "").trim();
+const clampIsbnInput = (value: string) => {
+  return value.replace(/\D/g, "").slice(0, 13);
+};
+const limitText = (value: string) => value.slice(0, MAX_INPUT_LENGTH);
 
 export function RegisterForm({ onRegistered }: Props) {
   const [form, setForm] = useState<RegisterState>(DEFAULT_FORM);
@@ -38,28 +45,59 @@ export function RegisterForm({ onRegistered }: Props) {
   const [autoLoading, setAutoLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [inputLimitError, setInputLimitError] = useState("");
 
   const isbnDigits = useMemo(() => normalizeIsbn(form.isbn), [form.isbn]);
   const subjectOptions = useMemo(() => getSubjectsByDomain(form.domain), [form.domain]);
 
   const updateField = <K extends keyof RegisterState>(key: K, value: RegisterState[K]) => {
+    setMessage("");
     setForm((prev) => ({ ...prev, [key]: value }));
   };
+  const updateLimitedField = <K extends keyof RegisterState>(key: K, value: RegisterState[K]) => {
+    const nextValue = String(value);
+    if (nextValue.length > MAX_INPUT_LENGTH) {
+      setInputLimitError("1000字以内で入力してください。");
+    } else {
+      setInputLimitError("");
+    }
+    updateField(key, limitText(nextValue) as RegisterState[K]);
+  };
 
-  const fetchBookMetadata = async (endpoint: string) => {
-    const response = await fetch(endpoint, { cache: "no-store" });
-    const payload = (await response.json()) as {
-      ok: boolean;
-      data?: {
-        title?: string;
-        author?: string;
-        publisher?: string;
-        publishedDate?: string;
+  const fetchBookMetadata = async (endpoint: string, apiKey: "ndl" | "gbooks") => {
+    try {
+      const response = await fetch(endpoint, { cache: "no-store" });
+      const payload = (await response.json()) as {
+        ok: boolean;
+        data?: {
+          title?: string;
+          author?: string;
+          publisher?: string;
+          publishedDate?: string;
+        };
+        error?: string;
       };
-      error?: string;
-    };
 
-    return { response, payload };
+      if (!response.ok || !payload.ok) {
+        return {
+          ok: false as const,
+          data: null,
+          error: formatApiHttpError(apiKey, response.status, payload.error),
+        };
+      }
+
+      return {
+        ok: true as const,
+        data: payload.data ?? null,
+        error: "",
+      };
+    } catch (caught) {
+      return {
+        ok: false as const,
+        data: null,
+        error: formatApiCaughtError(apiKey, caught),
+      };
+    }
   };
 
   const autoFillByIsbn = async () => {
@@ -69,26 +107,27 @@ export function RegisterForm({ onRegistered }: Props) {
     }
 
     setAutoLoading(true);
+    setMessage("");
     setError("");
 
     try {
-      const ndl = await fetchBookMetadata(`/api/ndl?isbn=${encodeURIComponent(isbn)}`);
-      const hasNdl = ndl.response.ok && ndl.payload.ok && ndl.payload.data;
+      const ndl = await fetchBookMetadata(`/api/ndl?isbn=${encodeURIComponent(isbn)}`, "ndl");
+      const hasNdl = ndl.ok && ndl.data;
 
-      const isMissingAnyField =
-        !ndl.payload.data?.title || !ndl.payload.data?.author || !ndl.payload.data?.publisher || !ndl.payload.data?.publishedDate;
+      const isMissingAnyField = !ndl.data?.title || !ndl.data?.author || !ndl.data?.publisher || !ndl.data?.publishedDate;
       const shouldTryGoogle = !hasNdl || isMissingAnyField;
       const google = shouldTryGoogle
-        ? await fetchBookMetadata(`/api/gbooks?isbn=${encodeURIComponent(isbn)}`)
+        ? await fetchBookMetadata(`/api/gbooks?isbn=${encodeURIComponent(isbn)}`, "gbooks")
         : null;
-      const hasGoogle = Boolean(google?.response.ok && google?.payload.ok && google?.payload.data);
+      const hasGoogle = Boolean(google?.ok && google?.data);
 
       if (!hasNdl && !hasGoogle) {
-        throw new Error(ndl.payload.error ?? google?.payload.error ?? "ISBN から書誌情報を取得できませんでした。");
+        const reasons = [ndl.error, google?.error].filter((item): item is string => Boolean(item && item.trim().length > 0));
+        throw new Error(reasons.length > 0 ? reasons.join(" / ") : "ISBN から書誌情報を取得できませんでした。");
       }
 
-      const primary = ndl.payload.data;
-      const secondary = google?.payload.data;
+      const primary = ndl.data;
+      const secondary = google?.data;
 
       setForm((prev) => ({
         ...prev,
@@ -98,13 +137,20 @@ export function RegisterForm({ onRegistered }: Props) {
         publishedDate: primary?.publishedDate || secondary?.publishedDate || "",
       }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "ISBN から書誌情報を取得できませんでした。");
+      setError(formatApiCaughtError("ndl", caught));
     } finally {
       setAutoLoading(false);
     }
   };
 
   const submit = async () => {
+    const publishedDate = form.publishedDate.trim();
+    if (publishedDate && !isValidBookDateInput(publishedDate)) {
+      setError("発売日の形式が不正です。2020, 2020/11, 2020/1/1 の形式で入力してください。");
+      setMessage("");
+      return;
+    }
+
     setLoading(true);
     setMessage("");
     setError("");
@@ -164,14 +210,15 @@ export function RegisterForm({ onRegistered }: Props) {
       }
 
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "登録に失敗しました。");
+        throw new Error(formatApiHttpError("sheet-register", response.status, payload.error));
       }
 
       setMessage(payload.overwritten ? "書籍を上書き登録しました。" : "書籍を登録しました。");
       setForm(DEFAULT_FORM);
+      setInputLimitError("");
       onRegistered?.();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "登録に失敗しました。");
+      setError(formatApiCaughtError("sheet-register", caught));
     } finally {
       setLoading(false);
     }
@@ -187,9 +234,11 @@ export function RegisterForm({ onRegistered }: Props) {
           <input
             id="isbn"
             className="form-input"
-            placeholder="13桁の数字を入力（ハイフンありでも OK）"
+            placeholder="13桁の数字を入力（半角数字）"
             value={form.isbn}
-            onChange={(event) => updateField("isbn", event.target.value)}
+            onChange={(event) => updateField("isbn", clampIsbnInput(event.target.value))}
+            inputMode="numeric"
+            maxLength={13}
           />
           <button
             type="button"
@@ -210,7 +259,7 @@ export function RegisterForm({ onRegistered }: Props) {
           id="title"
           className="form-input"
           value={form.title}
-          onChange={(event) => updateField("title", event.target.value)}
+          onChange={(event) => updateLimitedField("title", event.target.value)}
         />
 
         <label className="form-label" htmlFor="author">
@@ -220,7 +269,7 @@ export function RegisterForm({ onRegistered }: Props) {
           id="author"
           className="form-input"
           value={form.author}
-          onChange={(event) => updateField("author", event.target.value)}
+          onChange={(event) => updateLimitedField("author", event.target.value)}
         />
 
         <label className="form-label" htmlFor="publisher">
@@ -230,7 +279,7 @@ export function RegisterForm({ onRegistered }: Props) {
           id="publisher"
           className="form-input"
           value={form.publisher}
-          onChange={(event) => updateField("publisher", event.target.value)}
+          onChange={(event) => updateLimitedField("publisher", event.target.value)}
         />
 
         <label className="form-label" htmlFor="publishedDate">
@@ -241,7 +290,7 @@ export function RegisterForm({ onRegistered }: Props) {
           className="form-input"
           placeholder="2020, 2020/11, 2020/1/1 など"
           value={form.publishedDate}
-          onChange={(event) => updateField("publishedDate", event.target.value)}
+          onChange={(event) => updateLimitedField("publishedDate", event.target.value)}
         />
 
         <label className="form-label" htmlFor="domain-select">
@@ -277,12 +326,18 @@ export function RegisterForm({ onRegistered }: Props) {
           value={form.subject}
           onChange={(event) => updateField("subject", event.target.value)}
         >
-          <option value="">選択してください</option>
-          {subjectOptions.map((subject) => (
-            <option key={subject} value={subject}>
-              {subject}
-            </option>
-          ))}
+          {!form.domain ? (
+            <option value="">先に領域を選択してください</option>
+          ) : (
+            <>
+              <option value="">選択してください</option>
+              {subjectOptions.map((subject) => (
+                <option key={subject} value={subject}>
+                  {subject}
+                </option>
+              ))}
+            </>
+          )}
         </select>
 
         <label className="form-label" htmlFor="note">
@@ -292,7 +347,7 @@ export function RegisterForm({ onRegistered }: Props) {
           id="note"
           className="form-input form-textarea"
           value={form.note}
-          onChange={(event) => updateField("note", event.target.value)}
+          onChange={(event) => updateLimitedField("note", event.target.value)}
         />
       </div>
 
@@ -307,6 +362,7 @@ export function RegisterForm({ onRegistered }: Props) {
             setForm(DEFAULT_FORM);
             setMessage("");
             setError("");
+            setInputLimitError("");
           }}
           disabled={loading || autoLoading}
         >
@@ -316,6 +372,7 @@ export function RegisterForm({ onRegistered }: Props) {
 
       {autoLoading && <p className="status-message">ISBN から書誌情報を取得しています...</p>}
       {message && <p className="status-message status-success">{message}</p>}
+      {inputLimitError && <p className="status-message status-error">{inputLimitError}</p>}
       {error && <p className="status-message status-error">{error}</p>}
       <p className="status-message required-note">* は必須項目です。</p>
     </section>

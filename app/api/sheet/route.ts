@@ -1,5 +1,8 @@
 import { getBookStore } from "@/lib/server/book-store";
+import { isReversedDateRange, isValidBookDateInput } from "@/lib/date-format";
 import type { BookFilters, NewBookInput } from "@/lib/types";
+
+const MAX_INPUT_LENGTH = 1000;
 
 const getFiltersFromUrl = (url: string): BookFilters => {
   const searchParams = new URL(url).searchParams;
@@ -12,9 +15,16 @@ const getFiltersFromUrl = (url: string): BookFilters => {
   };
 };
 
+const hasTooLongValue = (values: Array<string | undefined>) => {
+  return values.some((value) => (value?.length ?? 0) > MAX_INPUT_LENGTH);
+};
+
 const validateBookInput = (input: Partial<NewBookInput>) => {
   if (!input.isbn || input.isbn.replace(/-/g, "").length !== 13) {
     return "ISBN は 13 桁で入力してください。";
+  }
+  if (hasTooLongValue([input.title, input.author, input.publisher, input.publishedDate, input.domain, input.subject, input.note])) {
+    return `入力は ${MAX_INPUT_LENGTH} 文字以内で入力してください。`;
   }
   if (!input.title?.trim()) {
     return "タイトルは必須です。";
@@ -25,12 +35,35 @@ const validateBookInput = (input: Partial<NewBookInput>) => {
   if (!input.subject?.trim()) {
     return "科目は必須です。";
   }
+  if (input.publishedDate?.trim() && !isValidBookDateInput(input.publishedDate)) {
+    return "発売日の形式が不正です。2020, 2020/11, 2020/1/1 の形式で入力してください。";
+  }
+  return null;
+};
+
+const validateFilters = (filters: BookFilters) => {
+  if (hasTooLongValue([filters.keyword, filters.startDate, filters.endDate, filters.domain, filters.subject])) {
+    return `入力は ${MAX_INPUT_LENGTH} 文字以内で入力してください。`;
+  }
+  if (filters.startDate?.trim() && !isValidBookDateInput(filters.startDate)) {
+    return "開始日の形式が不正です。2020, 2020/11, 2020/1/1 の形式で入力してください。";
+  }
+  if (filters.endDate?.trim() && !isValidBookDateInput(filters.endDate)) {
+    return "終了日の形式が不正です。2020, 2020/11, 2020/1/1 の形式で入力してください。";
+  }
+  if (filters.startDate?.trim() && filters.endDate?.trim() && isReversedDateRange(filters.startDate, filters.endDate)) {
+    return "開始日と終了日の期間が逆転しています。";
+  }
   return null;
 };
 
 export async function GET(request: Request) {
   try {
     const filters = getFiltersFromUrl(request.url);
+    const filtersError = validateFilters(filters);
+    if (filtersError) {
+      return Response.json({ ok: false, error: filtersError }, { status: 400 });
+    }
     const store = getBookStore();
     const rows = await store.list(filters);
     return Response.json({ ok: true, data: rows });
