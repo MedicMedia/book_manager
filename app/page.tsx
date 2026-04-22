@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { formatApiCaughtError, formatApiHttpError } from "@/lib/client/api-diagnostics";
 import type { BookRecord } from "@/lib/types";
 
 import { RegisterForm } from "./components/register-form";
@@ -55,13 +56,13 @@ export default function Home() {
       };
 
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "検索に失敗しました。");
+        throw new Error(formatApiHttpError("sheet-search", response.status, payload.error));
       }
 
       setRows(payload.data ?? []);
     } catch (caught) {
       setRows([]);
-      setSearchError(caught instanceof Error ? caught.message : "検索に失敗しました。");
+      setSearchError(formatApiCaughtError("sheet-search", caught));
     } finally {
       const elapsed = Date.now() - startAt;
       const minLoadingMs = 350;
@@ -90,7 +91,7 @@ export default function Home() {
       const response = await fetch(`/api/sheet?id=${encodeURIComponent(id)}`, { method: "DELETE" });
       const payload = (await response.json()) as { ok: boolean; error?: string };
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? "削除に失敗しました。");
+        throw new Error(formatApiHttpError("sheet-delete", response.status, payload.error));
       }
 
       if (lastSearch) {
@@ -99,7 +100,7 @@ export default function Home() {
         setRows((prev) => prev.filter((row) => row.id !== id));
       }
     } catch (caught) {
-      setSearchError(caught instanceof Error ? caught.message : "削除に失敗しました。");
+      setSearchError(formatApiCaughtError("sheet-delete", caught));
     } finally {
       setDeletingId("");
     }

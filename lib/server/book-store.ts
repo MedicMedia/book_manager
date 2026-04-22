@@ -1,4 +1,5 @@
 import type { BookFilters, BookRecord, NewBookInput } from "@/lib/types";
+import { parseBookDateBoundary } from "@/lib/date-format";
 
 type StoreResponse<T> = {
   ok: boolean;
@@ -50,6 +51,37 @@ const toNowString = () => {
 };
 
 const normalizeIsbn = (value: string) => value.replace(/-/g, "").trim();
+const normalizePublishedDate = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  // Apps Script / Sheets 由来の日時文字列を日付だけに正規化
+  const cleaned = trimmed.replace(/[.-]/g, "/").replace(/T.+$/i, "").replace(/\s.+$/i, "");
+  const parts = cleaned.split("/");
+  const [yearText, monthText, dayText] = parts;
+
+  if (!/^\d{4}$/.test(yearText ?? "")) {
+    return trimmed;
+  }
+
+  if (!monthText) {
+    return yearText;
+  }
+  if (!/^\d{1,2}$/.test(monthText)) {
+    return yearText;
+  }
+
+  if (!dayText) {
+    return `${yearText}/${String(Number(monthText))}`;
+  }
+  if (!/^\d{1,2}$/.test(dayText)) {
+    return `${yearText}/${String(Number(monthText))}`;
+  }
+
+  return `${yearText}/${String(Number(monthText))}/${String(Number(dayText))}`;
+};
 
 const normalizeBook = (raw: unknown): BookRecord => {
   const row = (raw ?? {}) as Record<string, unknown>;
@@ -76,28 +108,9 @@ const normalizeBook = (raw: unknown): BookRecord => {
     title: pick(SHEET_HEADER_KEYS.title, "title"),
     author: pick(SHEET_HEADER_KEYS.author, "author"),
     publisher: pick(SHEET_HEADER_KEYS.publisher, "publisher"),
-    publishedDate: pick(SHEET_HEADER_KEYS.publishedDate, "publishedDate"),
+    publishedDate: normalizePublishedDate(pick(SHEET_HEADER_KEYS.publishedDate, "publishedDate")),
     note: pick(SHEET_HEADER_KEYS.note, "note"),
   };
-};
-
-const parseLooseDate = (value?: string) => {
-  if (!value) {
-    return null;
-  }
-
-  const normalized = value.trim().replace(/[.-]/g, "/");
-  const [year, month = "1", day = "1"] = normalized.split("/");
-
-  if (!/^\d{4}$/.test(year) || !/^\d{1,2}$/.test(month) || !/^\d{1,2}$/.test(day)) {
-    return null;
-  }
-
-  const date = new Date(`${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T00:00:00+09:00`);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return date.getTime();
 };
 
 const includesKeyword = (row: BookRecord, keyword: string) => {
@@ -108,8 +121,8 @@ const includesKeyword = (row: BookRecord, keyword: string) => {
 };
 
 const filterBooks = (rows: BookRecord[], filters?: BookFilters) => {
-  const startAt = parseLooseDate(filters?.startDate);
-  const endAt = parseLooseDate(filters?.endDate);
+  const startAt = parseBookDateBoundary(filters?.startDate, "start");
+  const endAt = parseBookDateBoundary(filters?.endDate, "end");
 
   return rows.filter((row) => {
     if (!filters) {
@@ -129,14 +142,17 @@ const filterBooks = (rows: BookRecord[], filters?: BookFilters) => {
     }
 
     if (startAt || endAt) {
-      const publishedAt = parseLooseDate(row.publishedDate);
-      if (publishedAt === null) {
+      const publishedStart = parseBookDateBoundary(row.publishedDate, "start");
+      const publishedEnd = parseBookDateBoundary(row.publishedDate, "end");
+      if (publishedStart === null || publishedEnd === null) {
         return false;
       }
-      if (startAt && publishedAt < startAt) {
+
+      // 期間の重なり判定（両端を含む）
+      if (startAt && publishedEnd < startAt) {
         return false;
       }
-      if (endAt && publishedAt > endAt) {
+      if (endAt && publishedStart > endAt) {
         return false;
       }
     }
